@@ -91,14 +91,14 @@ def index(request):
         This page finds the first 1000 rows of a given 
         <a href="http://www.wprdc.org">WPRDC</a> resource
         that contain a given search term.<br><br>
-        
-        URL format: 
-            /spork/<resource id>/<column name>/<search term>
-
+        <br> 
+        URL format: <br>
+        &nbsp;&nbsp;&nbsp;&nbsp;/spork/[resource id]/[column name]/[search term]
+        <br><br>
         For instance, searching Tax Liens data for block_lot values of 167K98
-        can be done with this URL:
-            /spork/8cd32648-757c-4637-9076-85e144997ca8/block_lot/167K98
-
+        can be done with this URL:<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;/spork/8cd32648-757c-4637-9076-85e144997ca8/block_lot/167K98
+        <br><br>
         (That is, enter the resource you want after the slash in the URL 
         above and then enter another slash and the term you want to 
         search for.)"""
