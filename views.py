@@ -10,6 +10,21 @@ import csv
 
 DEFAULT_SITE = "https://data.wprdc.org"
 
+
+def get_and_write_next_rows(ckan,resource_id,field,search_term,writer,chunk_size,offset=0,written=0):
+    r = ckan.action.datastore_search(id=resource_id, limit=chunk_size, offset=offset, filters={field: search_term}) 
+    data = r['records']
+    schema = r['fields']
+    ordered_fields = [f['id'] for f in schema]
+
+    if written == 0:
+        writer.writerow(ordered_fields)
+  
+    for row in data:
+        writer.writerow([row[f] for f in ordered_fields]) 
+
+    return written+len(data), r['total']
+
 def csv_view(request,resource_id,field,search_term):
     # Create the HttpResponse object with the appropriate CSV header.
     site = DEFAULT_SITE
@@ -18,17 +33,14 @@ def csv_view(request,resource_id,field,search_term):
 
     writer = csv.writer(response)
 
+    offset = 0
+    chunk_size = 30000
     ckan = ckanapi.RemoteCKAN(site)
-    r = ckan.action.datastore_search(id=resource_id, limit=1000, filters={field: search_term}) 
-    data = r['records']
-    # Consider sending that data through the request...
-    schema = r['fields']
-    ordered_fields = [f['id'] for f in schema]
+    written, total = get_and_write_next_rows(ckan,resource_id,field,search_term,writer,chunk_size,offset=0,written=0)
 
-    writer.writerow(ordered_fields)
-   
-    for row in data:
-        writer.writerow([row[f] for f in ordered_fields]) 
+    while written < total:
+        offset = offset+chunk_size
+        written, total = get_and_write_next_rows(ckan,resource_id,field,search_term,writer,chunk_size,offset,written)
 
     return response
 
@@ -68,10 +80,10 @@ def results(request,resource_id,field,search_term):
     name = get_resource_name(site,resource_id)
     link = "/spork/{}/{}/{}/csv".format(resource_id,field,search_term)
     page = """<span><big>Download <a href="https://www.wprdc.org">WPRDC</a> data by the sporkful</big></span><br><br>
-        This page finds the first 1000 rows of the resource 
+        This page shows the first 1000 rows of the resource 
         ({}) that 
         contain a <i>{}</i> value equal to <b>{}</b>.<br><br>
-        Here is a link to the CSV file that holds those rows:
+        Here is a link to a CSV file that holds all {} of the rows:
         <a href="{}">CSV file</a>
         <br>
         <br>
@@ -81,7 +93,7 @@ def results(request,resource_id,field,search_term):
         <br>
         <br>
         <br><br>Here is a really verbose version of the data: 
-        {}""".format(name, field, search_term, link, data_table, html_table)
+        {}""".format(name, field, search_term, r['total'], link, data_table, html_table)
   
     return HttpResponse(page)
 
