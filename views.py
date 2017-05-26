@@ -77,6 +77,11 @@ def results(request,resource_id,field,search_term):
     data_table = json2html.convert(data)
     html_table = json2html.convert(r)
 
+    if 'total' in r:
+        total = r['total']
+    else:
+        total = 0
+
     name = get_resource_name(site,resource_id)
     link = "/spork/{}/{}/{}/csv".format(resource_id,field,search_term)
     page = """<span><big>Download <a href="https://www.wprdc.org">WPRDC</a> data by the sporkful</big></span><br><br>
@@ -93,7 +98,7 @@ def results(request,resource_id,field,search_term):
         <br>
         <br>
         <br><br>Here is a really verbose version of the data: 
-        {}""".format(name, field, search_term, r['total'], link, data_table, html_table)
+        {}""".format(name, field, search_term, total, link, data_table, html_table)
   
     return HttpResponse(page)
 
