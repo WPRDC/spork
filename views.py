@@ -137,6 +137,10 @@ def results(request,resource_id,field,search_term):
 def convert_operator(op):
     if op == 'eq' or op == '':
         return '='
+    if op in ['!','!=','<>']:
+        return '!='
+    if op in ['!~']:
+        return '!~'
     if op == '~':
         return 'LIKE'
     if op == 'lt':
@@ -171,11 +175,55 @@ def generate_query(resource_id,schema,query_string):
                     filter_s += "'%{}%'".format(q_list[2])
                 else:
                     filter_s += "'{}'".format(q_list[2])
+            elif field_type in ['bool','boolean']: 
+                op = convert_operator(q_list[1])
+                if op in ['!~','!=']:
+                    filter_s = '"{}" != {} OR "{}" IS NULL'.format(q_list[0],q_list[2],q_list[0])
+
+                    raise ValueError("How willl this AND together with other filters? Was the comma-joining actually valid? Should we enclose all filters in parentheses?")
+                    # This is how boolean fields work in Postgres:
+                    #    SELECT * FROM test1;
+                    #     a |    b
+                    #    ---+---------
+                    #     t | sic est
+                    #     f | non est
+
+                    #    SELECT * FROM test1 WHERE a;
+                    #     a |    b
+                    #    ---+---------
+                    #     t | sic est
+                    # https://www.postgresql.org/docs/9.1/static/datatype-boolean.html
+
+                    # CREATE TABLE test1 (a boolean, b text);
+                    # INSERT INTO test1 VALUES (TRUE, 'sic est');
+                    # INSERT INTO test1 VALUES (FALSE, 'non est');
+                    # INSERT INTO test1 VALUES (NULL, 'nemo');
+                    # SELECT * FROM test1 WHERE NOT a;
+                    # |     a |       b |
+                    # |-------|---------|
+                    # | false | non est |
+
+                    # SELECT * FROM test1 WHERE a IS NULL; (Null is not a value and 
+                    # can only be detected this way).
+                    #        |      a |    b |
+                    #        |--------|------|
+                    #        | (null) | nemo |
+                    
+                    # So two operators are desirable: x = False and x != True (where x != True
+                    # means x = True OR x IS NULL.
+
+                    # Maybe we can get away without implementing ORs by noting that we can
+                    # always AND together negated filters and then negate the output?
+                    # But then we need a way of negating the overall filter.
+                else:
+                    filter_s = '"{}" {} {}'.format(q_list[0], convert_operator(q_list[1]), q_list[2])
             else:
                 raise ValueError("Modify generate_query to handle fields of type {}".format(field_type))
             # timestamp, text, bool or boolean | [ ] Some of these others need better handling and/or conversion.
             # I've also seen 'tsvector' (which is used for the _full_text field returned by SQL query requests
             # and 'nested' though I don't know if the latter is official.
+
+
 
             filter_strings.append(filter_s)
         elif len(q_list) == 2:
@@ -188,7 +236,7 @@ def generate_query(resource_id,schema,query_string):
 
     query = 'SELECT * FROM "{}"'.format(resource_id)
     if len(filter_strings) > 0:
-        query += ' WHERE {}'.format(', '.join(filter_strings))
+        query += ' WHERE {}'.format(' AND '.join(filter_strings))
     if len(groupbys) > 0:
         query += ' GROUP BY {}'.format(groupbys.join(', '))
 
