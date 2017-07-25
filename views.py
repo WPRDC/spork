@@ -5,16 +5,41 @@ from django.http import HttpResponse
 import requests
 from json2html import *
 import ckanapi
+from pprint import pprint
 
-import csv
+import re, csv, sys
+try:
+    sys.path.insert(0, '/Users/drw/WPRDC') # A path that we need to import code from
+    from utility_belt.gadgets import get_schema, schema_dict, get_resource_parameter, get_package_name_from_resource_id
+except:
+    sys.path.insert(0, '/Users/daw165/bin/')# Office computer location
+    from utility_belt.gadgets import get_schema, schema_dict, get_resource_parameter, get_package_name_from_resource_id
 
 DEFAULT_SITE = "https://data.wprdc.org"
 
+def eliminate_field(schema,field_to_omit):
+    new_schema = []
+    for s in schema:
+        if s['id'] != field_to_omit:
+            new_schema.append(s)
+    return new_schema
 
-def get_and_write_next_rows(ckan,resource_id,field,search_term,writer,chunk_size,offset=0,written=0):
-    r = ckan.action.datastore_search(id=resource_id, limit=chunk_size, offset=offset, filters={field: search_term}) 
+def total_rows(ckan,query):
+    row_counting_query = re.sub('^SELECT \* ', 'SELECT COUNT(_id) ', query)
+    r = ckan.action.datastore_search_sql(sql=row_counting_query)
+    count = int(r['records'][0]['count'])
+    return count
+
+def get_and_write_next_rows(ckan,resource_id,query,field,search_term,writer,chunk_size,offset=0,written=0):
+    if query is None:
+        r = ckan.action.datastore_search(id=resource_id, limit=chunk_size, offset=offset, filters={field: search_term}) 
+    else:
+        query += " LIMIT {} OFFSET {}".format(chunk_size,offset)
+        r = ckan.action.datastore_search_sql(sql=query)
     data = r['records']
-    schema = r['fields']
+    schema = eliminate_field(r['fields'],'_full_text')
+    # Exclude _full_text from the schema.
+
     ordered_fields = [f['id'] for f in schema]
 
     if written == 0:
@@ -23,7 +48,12 @@ def get_and_write_next_rows(ckan,resource_id,field,search_term,writer,chunk_size
     for row in data:
         writer.writerow([row[f] for f in ordered_fields]) 
 
-    return written+len(data), r['total']
+    if 'total' in r:
+        total = r['total']
+    else:
+        total = total_rows(ckan,query)
+
+    return written+len(data), total
 
 def csv_view(request,resource_id,field,search_term):
     # Create the HttpResponse object with the appropriate CSV header.
@@ -52,6 +82,8 @@ def dealias(site,pseudonym):
 
 def get_resource_name(site,resource_id):
     # Code borrowed from utility-belt, then mutated.
+
+    # [ ] Eventually merge these changes with utility_belt/gadgets.py
     try:
         ckan = ckanapi.RemoteCKAN(site)
         metadata = ckan.action.resource_show(id=resource_id)
@@ -102,6 +134,147 @@ def results(request,resource_id,field,search_term):
   
     return HttpResponse(page)
 
+def convert_operator(op):
+    if op == 'eq' or op == '':
+        return '='
+    if op == '~':
+        return 'LIKE'
+    if op == 'lt':
+        return '<'
+    if op == 'gt':
+        return '>'
+    raise ValueError("{} is an operator for which there is not yet a conversion".format(op))
+
+def generate_query(resource_id,schema,query_string):
+    elements = query_string.split('/')
+    filter_strings = []
+    groupbys = []
+    aggregators = []
+    for e in elements:
+        q_list = e.split('--')
+        # Possible formats: 
+        #    /field1--value1/field2--value2/ (where equality is implicit)
+        #   /field1--eq--value1/field2--lt--value2/groupby--field3/aggregateby--sum/
+        #       (equality (and other relations) are explicit)
+        if len(q_list) == 3: # It's a filter
+#        r = query_resource(site,  'SELECT * FROM "{}" WHERE venue_type = \'Church\' LIMIT 3'.format(resource_id), API_key)
+            # Knowing the types of the fields is important for formatting the query
+            schema_types = schema_dict(schema)
+            field_type = schema_types[q_list[0]]
+            
+            if field_type in ['numeric','float8','int4','int8']:
+                filter_s = '"{}" {} {}'.format(q_list[0], convert_operator(q_list[1]), q_list[2])
+            elif field_type in ['text','JSON','json']: 
+                op = convert_operator(q_list[1])
+                filter_s = '"{}" {} '.format(q_list[0], op)
+                if op == 'LIKE':
+                    filter_s += "'%{}%'".format(q_list[2])
+                else:
+                    filter_s += "'{}'".format(q_list[2])
+            else:
+                raise ValueError("Modify generate_query to handle fields of type {}".format(field_type))
+            # timestamp, text, bool or boolean | [ ] Some of these others need better handling and/or conversion.
+            # I've also seen 'tsvector' (which is used for the _full_text field returned by SQL query requests
+            # and 'nested' though I don't know if the latter is official.
+
+            filter_strings.append(filter_s)
+        elif len(q_list) == 2:
+            if q_list[0] == 'groupby':
+                groupbys.append(q_list[1])
+            elif q_list[0] == 'aggregateby':
+                aggregators.append(q_list[1])
+        else: 
+            raise ValueError("q_list is {} elements long, which is an unexpected length".format(len(q_list)))
+
+    query = 'SELECT * FROM "{}"'.format(resource_id)
+    if len(filter_strings) > 0:
+        query += ' WHERE {}'.format(', '.join(filter_strings))
+    if len(groupbys) > 0:
+        query += ' GROUP BY {}'.format(groupbys.join(', '))
+
+    # [ ] Add aggregation function(s)
+
+    return query, filter_strings, groupbys, aggregators
+
+def query_csv_view(request,resource_id,query_string):
+    # Create the HttpResponse object with the appropriate CSV header.
+    site = DEFAULT_SITE
+    schema = get_schema(site,resource_id,API_key=None)
+    query, filter_strings, groupbys, aggregators = generate_query(resource_id,schema,query_string) 
+
+    name = get_resource_name(site,resource_id)
+    name = re.sub(' ','_',name)
+    if len(filter_strings) > 0:
+        name += "-filtered"
+    if len(groupbys) > 0:
+        name += "-grouped"
+
+    response = HttpResponse(content_type='text/csv')
+    response['Content-Disposition'] = 'attachment; filename="{}.csv"'.format(name)
+
+    writer = csv.writer(response)
+
+    offset = 0
+    chunk_size = 3000
+    ckan = ckanapi.RemoteCKAN(site)
+    written, total = get_and_write_next_rows(ckan,resource_id,query,None,None,writer,chunk_size,offset=0,written=0)
+    # [ ] Maybe refactor get_and_write_next_rows to handle either field/search_term-style queries OR
+    # SQL queries.
+
+    while written < total:
+        offset = offset+chunk_size
+        written, total = get_and_write_next_rows(ckan,resource_id,query,None,None,writer,chunk_size,offset,written)
+
+    return response
+
+def parse_and_query(request,resource_id,query_string):
+    site = DEFAULT_SITE
+    schema = get_schema(site,resource_id,API_key=None)
+    
+    query, filter_strings, groupbys, aggregators = generate_query(resource_id,schema,query_string) 
+    query += " LIMIT 1000"
+
+    ckan = ckanapi.RemoteCKAN(site)
+    print("query = {}".format(query))
+    r = ckan.action.datastore_search_sql(sql=query)
+
+    data = r['records']
+    for row in data:
+        del row['_full_text']
+    data_table = json2html.convert(data)
+    html_table = json2html.convert(r)
+
+    if 'total' in r:
+        total = r['total']
+    else:
+        total = total_rows(ckan,query)
+
+    name = get_resource_name(site,resource_id)
+    link = "/spork/{}/{}/csv".format(resource_id,query_string)
+    page = """<span><big>Download <a href="https://www.wprdc.org">WPRDC</a> data by the sporkful</big></span><br><br>
+        This page shows the first 1000 rows of the resource 
+        ({}) that 
+        satisfy the filters <i>{}</i>,
+        grouped by <b>{}</b>.
+
+        <br><br>
+        Here is a link to a CSV file that holds all {} of the rows:
+        <a href="{}">CSV file</a>
+        <br>
+        <br>
+        <br>
+        Data preview:
+        {}
+        <br>
+        <br>
+        <br><br>Here is a really verbose version of the data: 
+        {}
+        
+        By the way, here is the SQL query that was used to get this data: <br><br>
+        <code>{}</code>""".format(name, ','.join(filter_strings), ','.join(groupbys), total, link, data_table, html_table, query)
+  
+    return HttpResponse(page)
+
 
 def index(request):
     page = """<span><big>Download data by the sporkful</big></span><br><br>
@@ -110,13 +283,22 @@ def index(request):
         that contain a given search term.<br><br>
         <br> 
         URL format: <br>
-        &nbsp;&nbsp;&nbsp;&nbsp;/spork/[resource id]/[column name]/[search term]
+        &nbsp;&nbsp;&nbsp;&nbsp;/spork/[resource id]/[column name]----[search term]/[another column name]----[another search term]/groupby--[column to group by]
+
         <br><br>
-        For instance, searching Tax Liens data for block_lot values of 167K98
+        For instance, searching the tax liens data for block_lot values of 167K98
         can be done with this URL:<br>
-        &nbsp;&nbsp;&nbsp;&nbsp;/spork/8cd32648-757c-4637-9076-85e144997ca8/block_lot/167K98
+        &nbsp;&nbsp;&nbsp;&nbsp;/spork/8cd32648-757c-4637-9076-85e144997ca8/block_lot----167K98
         <br><br>
         (That is, enter the resource you want after the slash in the URL 
-        above and then enter another slash and the term you want to 
-        search for.)"""
+        above and then enter another slash and define a filter by specifying the
+        field name and the search term, separated by four dashes.)
+        <br><br> 
+        Here's a more complex query: Search the tax liens data for parcels in Swissvale
+        but only County tax liens.
+        can be done with this URL:<br>
+        &nbsp;&nbsp;&nbsp;&nbsp;/spork/8cd32648-757c-4637-9076-85e144997ca8/municipality----Swissvale Boro/Lien Description----Allegheny County Tax Lien
+        <br><br>
+        
+        """
     return HttpResponse(page)
