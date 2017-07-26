@@ -168,6 +168,8 @@ def generate_query(resource_id,schema,query_string):
     filter_strings = []
     groupbys = []
     aggregators = []
+    orderbys = []
+    op = None
     for e in elements:
         q_list = e.split('--')
         # Possible formats: 
@@ -186,6 +188,13 @@ def generate_query(resource_id,schema,query_string):
                 # and then they become functions in the 
                 # aggregators list, such that aggregators looks like
                 #   aggregators = ['SUM(field_name)','AVG(whoa)']
+            elif q_list[0] == 'orderby':
+                field = q_list[1]
+                direction = q_list[2].upper()
+                if direction in ['ASC','DESC','']:
+                    orderbys.append("{} {}".format(field,direction)) 
+                else:
+                    raise ValueError('Unknown ordering direction {} found'.format(q_list[2]))
             else: 
                 #r = query_resource(site,  'SELECT * FROM "{}" WHERE venue_type = \'Church\' LIMIT 3'.format(resource_id), API_key)
                 # Knowing the types of the fields is important for formatting the query
@@ -276,6 +285,8 @@ def generate_query(resource_id,schema,query_string):
         query += ' WHERE {}'.format(' AND '.join(filter_strings))
     if len(groupbys) > 0:
         query += ' GROUP BY {}'.format(', '.join(groupbys))
+    if len(orderbys) > 0:
+        query += ' ORDER BY {}'.format(', '.join(orderbys))
 
     return query, filter_strings, groupbys, aggregators
 
