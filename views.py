@@ -279,7 +279,7 @@ def generate_query(resource_id,schema,query_string):
             query += "{}, ".format(', '.join(groupbys))
         if len(aggregators) > 0:
             query += "{}, ".format(', '.join(aggregators))
-        query += 'COUNT("_id") as "number_of_rows" FROM "{}"'.format(resource_id)   
+        query += 'COUNT("_id") as "count" FROM "{}"'.format(resource_id)   
     
     if len(filter_strings) > 0:
         query += ' WHERE {}'.format(' AND '.join(filter_strings))
