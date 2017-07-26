@@ -15,6 +15,12 @@ except:
     sys.path.insert(0, '/Users/daw165/bin/')# Office computer location
     from utility_belt.gadgets import get_schema, schema_dict, get_resource_parameter, get_package_name_from_resource_id
 
+# [ ] All CKAN API requests should be API-key-free to avoid any possibility of tables 
+# being dropped or data being modified.
+
+# [ ] Add checkbox to drop duplicate rows and implement by changing SELECT to SELECT DISTINCT.
+
+
 DEFAULT_SITE = "https://data.wprdc.org"
 
 def eliminate_field(schema,field_to_omit):
@@ -25,8 +31,16 @@ def eliminate_field(schema,field_to_omit):
     return new_schema
 
 def total_rows(ckan,query):
-    row_counting_query = re.sub('^SELECT \* ', 'SELECT COUNT(_id) ', query)
+    #row_counting_query = re.sub('^SELECT .* FROM', 'SELECT COUNT(*) as "row_count" FROM', query)
+    row_counting_query = 'SELECT COUNT(*) FROM ({}) subresult'.format(query)
+    print("row_counting_query = {}".format(row_counting_query))
     r = ckan.action.datastore_search_sql(sql=row_counting_query)
+    #for k in r.keys():
+    #    if k == 'records':
+    #        print("'records':")
+    #        pprint(r[k][0:10])
+    #    else:
+    #        print("'{}': {}".format(k,r[k]))
     count = int(r['records'][0]['count'])
     return count
 
@@ -161,86 +175,107 @@ def generate_query(resource_id,schema,query_string):
         #   /field1--eq--value1/field2--lt--value2/groupby--field3/aggregateby--sum/
         #       (equality (and other relations) are explicit)
         if len(q_list) == 3: # It's a filter
-#        r = query_resource(site,  'SELECT * FROM "{}" WHERE venue_type = \'Church\' LIMIT 3'.format(resource_id), API_key)
-            # Knowing the types of the fields is important for formatting the query
-            schema_types = schema_dict(schema)
-            field_type = schema_types[q_list[0]]
-            
-            if field_type in ['numeric','float8','int4','int8']:
-                filter_s = '"{}" {} {}'.format(q_list[0], convert_operator(q_list[1]), q_list[2])
-            elif field_type in ['text','JSON','json']: 
-                op = convert_operator(q_list[1])
-                filter_s = '"{}" {} '.format(q_list[0], op)
-                if op == 'LIKE':
-                    filter_s += "'%{}%'".format(q_list[2])
+            if q_list[0] == 'aggregateby':
+                agg = q_list[1].upper()
+                if agg in ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT']:
+                    aggregators.append("{}({})".format(q_list[1],q_list[2])) 
                 else:
-                    filter_s += "'{}'".format(q_list[2])
-            elif field_type in ['bool','boolean']: 
-                op = convert_operator(q_list[1])
-                if op in ['!~','!=']:
-                    filter_s = '"{}" != {} OR "{}" IS NULL'.format(q_list[0],q_list[2],q_list[0])
-
-                    raise ValueError("How willl this AND together with other filters? Was the comma-joining actually valid? Should we enclose all filters in parentheses?")
-                    # This is how boolean fields work in Postgres:
-                    #    SELECT * FROM test1;
-                    #     a |    b
-                    #    ---+---------
-                    #     t | sic est
-                    #     f | non est
-
-                    #    SELECT * FROM test1 WHERE a;
-                    #     a |    b
-                    #    ---+---------
-                    #     t | sic est
-                    # https://www.postgresql.org/docs/9.1/static/datatype-boolean.html
-
-                    # CREATE TABLE test1 (a boolean, b text);
-                    # INSERT INTO test1 VALUES (TRUE, 'sic est');
-                    # INSERT INTO test1 VALUES (FALSE, 'non est');
-                    # INSERT INTO test1 VALUES (NULL, 'nemo');
-                    # SELECT * FROM test1 WHERE NOT a;
-                    # |     a |       b |
-                    # |-------|---------|
-                    # | false | non est |
-
-                    # SELECT * FROM test1 WHERE a IS NULL; (Null is not a value and 
-                    # can only be detected this way).
-                    #        |      a |    b |
-                    #        |--------|------|
-                    #        | (null) | nemo |
-                    
-                    # So two operators are desirable: x = False and x != True (where x != True
-                    # means x = True OR x IS NULL.
-
-                    # Maybe we can get away without implementing ORs by noting that we can
-                    # always AND together negated filters and then negate the output?
-                    # But then we need a way of negating the overall filter.
-                else:
+                    raise ValueError('Unknown aggregator function {} found'.format(q_list[1]))
+                # In the URL, aggregators are of the form
+                # /aggregateby--sum--field_name/
+                # and then they become functions in the 
+                # aggregators list, such that aggregators looks like
+                #   aggregators = ['SUM(field_name)','AVG(whoa)']
+            else: 
+                #r = query_resource(site,  'SELECT * FROM "{}" WHERE venue_type = \'Church\' LIMIT 3'.format(resource_id), API_key)
+                # Knowing the types of the fields is important for formatting the query
+                schema_types = schema_dict(schema)
+                field_type = schema_types[q_list[0]]
+                if field_type in ['numeric','float8','int4','int8']:
                     filter_s = '"{}" {} {}'.format(q_list[0], convert_operator(q_list[1]), q_list[2])
-            else:
-                raise ValueError("Modify generate_query to handle fields of type {}".format(field_type))
-            # timestamp, text, bool or boolean | [ ] Some of these others need better handling and/or conversion.
-            # I've also seen 'tsvector' (which is used for the _full_text field returned by SQL query requests
-            # and 'nested' though I don't know if the latter is official.
+                elif field_type in ['text','JSON','json']: 
+                    op = convert_operator(q_list[1])
+                    filter_s = '"{}" {} '.format(q_list[0], op)
+                    if op == 'LIKE':
+                        filter_s += "'%{}%'".format(q_list[2])
+                    else:
+                        filter_s += "'{}'".format(q_list[2])
+                elif field_type in ['bool','boolean']: 
+                    op = convert_operator(q_list[1])
+                    if op in ['!~','!=']:
+                        filter_s = '("{}" != {} OR "{}" IS NULL)'.format(q_list[0],q_list[2],q_list[0])
+                        # This is how boolean fields work in Postgres:
+                        #    SELECT * FROM test1;
+                        #     a |    b
+                        #    ---+---------
+                        #     t | sic est
+                        #     f | non est
 
+                        #    SELECT * FROM test1 WHERE a;
+                        #     a |    b
+                        #    ---+---------
+                        #     t | sic est
+                        # https://www.postgresql.org/docs/9.1/static/datatype-boolean.html
 
+                        # CREATE TABLE test1 (a boolean, b text);
+                        # INSERT INTO test1 VALUES (TRUE, 'sic est');
+                        # INSERT INTO test1 VALUES (FALSE, 'non est');
+                        # INSERT INTO test1 VALUES (NULL, 'nemo');
+                        # SELECT * FROM test1 WHERE NOT a;
+                        # |     a |       b |
+                        # |-------|---------|
+                        # | false | non est |
 
-            filter_strings.append(filter_s)
+                        # SELECT * FROM test1 WHERE a IS NULL; (Null is not a value and 
+                        # can only be detected this way).
+                        #        |      a |    b |
+                        #        |--------|------|
+                        #        | (null) | nemo |
+                        
+                        # So two operators are desirable: x = False and x != True (where x != True
+                        # means x = True OR x IS NULL.
+
+                        # Maybe we can get away without implementing ORs by noting that we can
+                        # always AND together negated filters and then negate the output?
+                        # But then we need a way of negating the overall filter.
+                    else:
+                        filter_s = '"{}" {} {}'.format(q_list[0], convert_operator(q_list[1]), q_list[2])
+                else:
+                    raise ValueError("Modify generate_query to handle fields of type {}".format(field_type))
+                # timestamp, text, bool or boolean | [ ] Some of these others need better handling and/or conversion.
+                # I've also seen 'tsvector' (which is used for the _full_text field returned by SQL query requests
+                # and 'nested' though I don't know if the latter is official.
+
+                filter_strings.append(filter_s)
         elif len(q_list) == 2:
             if q_list[0] == 'groupby':
                 groupbys.append(q_list[1])
-            elif q_list[0] == 'aggregateby':
-                aggregators.append(q_list[1])
+                # An example of a SQL query with grouping and aggregating:
+                #   SELECT Shippers.ShipperName,COUNT(Orders.OrderID) AS NumberOfOrders FROM Orders
+                #        LEFT JOIN Shippers ON Orders.ShipperID = Shippers.ShipperID
+                #        GROUP BY ShipperName;
+
+                # The result is two columns: ShipperName and NumberOfOrders.
+
+                # Aggregation goes hand-in-hand with grouping.
+                # Good default aggregations might be number_of_rows and summation of any numeric field.
+
         else: 
             raise ValueError("q_list is {} elements long, which is an unexpected length".format(len(q_list)))
 
     query = 'SELECT * FROM "{}"'.format(resource_id)
+    if len(groupbys) > 0:
+        query = 'SELECT '
+        if len(groupbys) > 0:
+            query += "{}, ".format(', '.join(groupbys))
+        if len(aggregators) > 0:
+            query += "{}, ".format(', '.join(aggregators))
+        query += 'COUNT("_id") as "number_of_rows" FROM "{}"'.format(resource_id)   
+    
     if len(filter_strings) > 0:
         query += ' WHERE {}'.format(' AND '.join(filter_strings))
     if len(groupbys) > 0:
-        query += ' GROUP BY {}'.format(groupbys.join(', '))
-
-    # [ ] Add aggregation function(s)
+        query += ' GROUP BY {}'.format(', '.join(groupbys))
 
     return query, filter_strings, groupbys, aggregators
 
@@ -280,15 +315,15 @@ def parse_and_query(request,resource_id,query_string):
     schema = get_schema(site,resource_id,API_key=None)
     
     query, filter_strings, groupbys, aggregators = generate_query(resource_id,schema,query_string) 
-    query += " LIMIT 1000"
 
     ckan = ckanapi.RemoteCKAN(site)
     print("query = {}".format(query))
-    r = ckan.action.datastore_search_sql(sql=query)
+    r = ckan.action.datastore_search_sql(sql=query + " LIMIT 1000")
 
     data = r['records']
     for row in data:
-        del row['_full_text']
+        if '_full_text' in row:
+            del row['_full_text']
     data_table = json2html.convert(data)
     html_table = json2html.convert(r)
 
@@ -319,7 +354,7 @@ def parse_and_query(request,resource_id,query_string):
         {}
         
         By the way, here is the SQL query that was used to get this data: <br><br>
-        <code>{}</code>""".format(name, ','.join(filter_strings), ','.join(groupbys), total, link, data_table, html_table, query)
+        <code>{}</code>""".format(name, ', '.join(filter_strings), ', '.join(groupbys), total, link, data_table, html_table, query)
   
     return HttpResponse(page)
 
