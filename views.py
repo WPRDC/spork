@@ -23,6 +23,13 @@ except:
 
 DEFAULT_SITE = "https://data.wprdc.org"
 
+def convert_booleans_to_text(rows):
+    for r in rows:
+        for key in r:
+            if type(r[key]) == bool:
+                r[key] = "{}".format(r[key])
+    return rows
+
 def eliminate_field(schema,field_to_omit):
     new_schema = []
     for s in schema:
@@ -120,7 +127,11 @@ def results(request,resource_id,field,search_term):
     r = ckan.action.datastore_search(id=resource_id, limit=1000, filters={field: search_term}) #, offset=offset)
 
     data = r['records']
-    data_table = json2html.convert(data)
+    data_table = json2html.convert(convert_booleans_to_text(data))
+    # This should be fixed eventually:
+    #       https://github.com/softvar/json2html/pull/9
+    if 'records' in r:
+        r['records'] = convert_booleans_to_text(r['records'])
     html_table = json2html.convert(r)
 
     if 'total' in r:
@@ -335,7 +346,12 @@ def parse_and_query(request,resource_id,query_string):
     for row in data:
         if '_full_text' in row:
             del row['_full_text']
-    data_table = json2html.convert(data)
+
+    data_table = json2html.convert(convert_booleans_to_text(data))
+    # This should be fixed eventually:
+    #       https://github.com/softvar/json2html/pull/9
+    if 'records' in r:
+        r['records'] = convert_booleans_to_text(r['records'])
     html_table = json2html.convert(r)
 
     if 'total' in r:
