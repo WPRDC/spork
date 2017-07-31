@@ -198,7 +198,7 @@ def generate_query(resource_id,schema,query_string=''):
                 if q_list[0] == 'aggregateby':
                     agg = q_list[1].upper()
                     if agg in ['SUM', 'AVG', 'MIN', 'MAX', 'COUNT']:
-                        aggregators.append("{}({})".format(q_list[1],q_list[2])) 
+                        aggregators.append('{}("{}")'.format(q_list[1],q_list[2])) 
                     else:
                         raise ValueError('Unknown aggregator function {} found'.format(q_list[1]))
                     # In the URL, aggregators are of the form
@@ -216,7 +216,7 @@ def generate_query(resource_id,schema,query_string=''):
                     field = q_list[1]
                     direction = q_list[2].upper()
                     if direction in ['ASC','DESC','']:
-                        orderbys.append("{} {}".format(field,direction)) 
+                        orderbys.append('"{}" {}'.format(field,direction)) 
                     else:
                         raise ValueError('Unknown ordering direction {} found'.format(q_list[2]))
                 else: 
@@ -307,6 +307,9 @@ def generate_query(resource_id,schema,query_string=''):
 
                     # Aggregation goes hand-in-hand with grouping.
                     # Good default aggregations might be number_of_rows and summation of any numeric field.
+                elif q_list[0] == 'orderby':
+                    field = q_list[1]
+                    orderbys.append('"{}" ASC'.format(field,direction)) 
             else: 
                 raise ValueError("q_list is {} elements long, which is an unexpected length".format(len(q_list)))
 
