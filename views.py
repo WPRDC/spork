@@ -19,7 +19,8 @@ except:
 # [ ] All CKAN API requests should be API-key-free to avoid any possibility of tables 
 # being dropped or data being modified.
 
-# [ ] Implement timestamp support
+# [ ] Implement a smart limiter which estimates the memory footprints required by running this script
+# and processing the query on the CKAN instance and adjusts as necessary.
 
 # Front-end stuff
 # [ ] Implement GUI (probably using JQuery Query Builder, though also consider django-report-builder)
@@ -310,6 +311,8 @@ def generate_query(resource_id,schema,query_string=''):
                 elif q_list[0] == 'orderby':
                     field = q_list[1]
                     orderbys.append('"{}" ASC'.format(field,direction)) 
+                else:
+                    raise ValueError("Unable to process the element {}".format(q_list))
             else: 
                 raise ValueError("q_list is {} elements long, which is an unexpected length".format(len(q_list)))
 
