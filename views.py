@@ -18,6 +18,15 @@ except:
 
 # [ ] All CKAN API requests should be API-key-free to avoid any possibility of tables 
 # being dropped or data being modified.
+#     [ ] Implement other SQL injection attack defenses:
+#         * https://www.slideshare.net/openpbs/sql-injection-defense-in-python
+
+# [ ] Implement SQLite output (maybe by using dataset).
+#     [ ] Think about putting limits on the output size and deciding between keeping the SQLite
+#         database in memory versus storing it in a temporary file (limiting the memory footprint).
+#         * Maybe only offer SQLite output for some maximum number of rows ==> Switch to Jinja templates.
+#     * Also, if SQLite output is a general CKAN feature we would like, should SQLite conversion 
+#     be a sepaate function/module/API?
 
 # [ ] Implement a smart limiter which estimates the memory footprints required by running this script
 # and processing the query on the CKAN instance and adjusts as necessary.
