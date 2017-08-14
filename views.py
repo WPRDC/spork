@@ -179,7 +179,7 @@ def convert_operator(op):
         return '>'
     raise ValueError("{} is an operator for which there is not yet a conversion".format(op))
 
-def generate_query(resource_id,schema,query_string=''):
+def generate_query(ckan,resource_id,schema,query_string=''):
     filter_strings = []
     groupbys = []
     aggregators = []
@@ -310,11 +310,20 @@ def generate_query(resource_id,schema,query_string=''):
                     # Good default aggregations might be number_of_rows and summation of any numeric field.
                 elif q_list[0] == 'orderby':
                     field = q_list[1]
-                    orderbys.append('"{}" ASC'.format(field,direction)) 
+                    orderbys.append('"{}" ASC'.format(field)) 
                 else:
                     raise ValueError("Unable to process the element {}".format(q_list))
             else: 
                 raise ValueError("q_list is {} elements long, which is an unexpected length".format(len(q_list)))
+
+
+
+    #subquery = 'SELECT "_id" FROM "{}"'.format(resource_id)
+    #if len(filter_strings) > 0:
+    #    subquery += ' WHERE {}'.format(' AND '.join(filter_strings))
+    #if len(groupbys) > 0:
+    #   subquery += ' GROUP BY {}'.format(', '.join(groupbys))
+    #total_subquery_rows = total_rows(ckan,subquery)
 
     query = 'SELECT * FROM "{}"'.format(resource_id)
     if len(groupbys) > 0:
@@ -324,8 +333,10 @@ def generate_query(resource_id,schema,query_string=''):
         if len(aggregators) > 0:
             for a in aggregators:
                 query += '{}, '.format(a)
-        query += 'COUNT("_id") as "count" FROM "{}"'.format(resource_id)   
-    
+        query += 'COUNT("_id") as "count"'
+        #query += ', ROUND((COUNT("_id")*100.0 / ({})),2) as "percent" '.format(total_subquery_rows)
+        query += ' FROM "{}"'.format(resource_id)   
+
     if len(filter_strings) > 0:
         query += ' WHERE {}'.format(' AND '.join(filter_strings))
     if len(groupbys) > 0:
@@ -339,7 +350,8 @@ def query_csv_view(request,resource_id,query_string):
     # Create the HttpResponse object with the appropriate CSV header.
     site = DEFAULT_SITE
     schema = get_schema(site,resource_id,API_key=None)
-    query, filter_strings, groupbys, aggregators = generate_query(resource_id,schema,query_string) 
+    ckan = ckanapi.RemoteCKAN(site)
+    query, filter_strings, groupbys, aggregators = generate_query(ckan,resource_id,schema,query_string) 
 
     name = get_resource_name(site,resource_id)
     name = re.sub(' ','_',name)
@@ -355,7 +367,7 @@ def query_csv_view(request,resource_id,query_string):
 
     offset = 0
     chunk_size = 3000
-    ckan = ckanapi.RemoteCKAN(site)
+
     written, total = get_and_write_next_rows(ckan,resource_id,query,None,None,writer,chunk_size,offset=0,written=0)
 
     while written < total:
@@ -368,9 +380,9 @@ def parse_and_query(request,resource_id,query_string):
     site = DEFAULT_SITE
     schema = get_schema(site,resource_id,API_key=None)
     
-    query, filter_strings, groupbys, aggregators = generate_query(resource_id,schema,query_string) 
-
     ckan = ckanapi.RemoteCKAN(site)
+    query, filter_strings, groupbys, aggregators = generate_query(ckan,resource_id,schema,query_string) 
+
     print("query = {}".format(query))
     r = ckan.action.datastore_search_sql(sql=query + " LIMIT 1000")
 
