@@ -193,6 +193,7 @@ def generate_query(ckan,resource_id,schema,query_string=''):
     groupbys = []
     aggregators = []
     orderbys = []
+    new_selectors = []
     if query_string != '':
         elements = query_string.split('/')
         op = None
@@ -204,6 +205,26 @@ def generate_query(ckan,resource_id,schema,query_string=''):
             #       (equality (and other relations) are explicit)
             if q_list == ['']:
                 pass
+            elif len(q_list) == 4: # It's a extract--THING--from--FIELD #convert-FIELD-to-SOMETHING_ELSE
+                if q_list[0] == 'extract':
+                    field = q_list[3]
+                    schema_types = schema_dict(schema)
+                    field_type = schema_types[field]
+                    if q_list[2] == 'from':
+                        if field_type in ['date','timestamp'] and q_list[1] == 'year':
+                           #new_selectors.append('EXTRACT(YEAR from "{}")'.format(field))
+#                           new_selectors.append('DATE_PART({}, "{}") as year'.format("'year'",field))
+                            ns = "DATE_PART('year',"
+                            ns += '"{}") as year'.format(field)
+                            print(ns)
+                            new_selectors.append(ns)
+                            pass
+                        else:
+                            raise ValueError("Modify generate_query to handle {} operations".format(e))
+                    else:
+                        raise ValueError("Modify generate_query to handle {} operations".format(e))
+                else:
+                    raise ValueError("Modify generate_query to handle {} operations".format(q_list[0]))
             elif len(q_list) == 3: # It's a filter
                 if q_list[0] == 'aggregateby':
                     agg = q_list[1].upper()
@@ -215,7 +236,7 @@ def generate_query(ckan,resource_id,schema,query_string=''):
                     # /aggregateby--sum--field_name/
                     # and then they become functions in the 
                     # aggregators list, such that aggregators looks like
-                    #   aggregators = ['SUM(field_name)','AVG(whoa)']
+                    #   aggregators = ['SUM(field_name)','AVG(tessercat_count)']
 
                     # Since parentheses are allowed, this could be changed to 
                     # /sum(field_name)/
@@ -315,8 +336,10 @@ def generate_query(ckan,resource_id,schema,query_string=''):
 
                     # The result is two columns: ShipperName and NumberOfOrders.
 
-                    # Aggregation goes hand-in-hand with grouping.
-                    # Good default aggregations might be number_of_rows and summation of any numeric field.
+                    # Aggregation is a kind of implicit grouping. One can select the average value for
+                    # a field over the entire table and get a one-row result.
+                    # Good default aggregations (if one were to include some) might be number_of_rows 
+                    # and summation of any numeric field.
                 elif q_list[0] == 'orderby':
                     field = q_list[1]
                     orderbys.append('"{}" ASC'.format(field)) 
@@ -334,15 +357,17 @@ def generate_query(ckan,resource_id,schema,query_string=''):
     #   subquery += ' GROUP BY {}'.format(', '.join(groupbys))
     #total_subquery_rows = total_rows(ckan,subquery)
 
+    #new_selectors = ['"SALEDESC"']
+
     query = 'SELECT * FROM "{}"'.format(resource_id)
-    if len(groupbys) > 0:
-        query = 'SELECT '
+    if len(groupbys + new_selectors + aggregators) > 0:
+        if len(groupbys) == 0:
+            query = 'SELECT *, '
+        else:
+            query = 'SELECT '
+        query += '{} '.format(', '.join(new_selectors + groupbys + aggregators))
         if len(groupbys) > 0:
-         query += '{}, '.format(', '.join(groupbys))
-        if len(aggregators) > 0:
-            for a in aggregators:
-                query += '{}, '.format(a)
-        query += 'COUNT("_id") as "count"'
+            query += ', COUNT("_id") as "count"'
         #query += ', ROUND((COUNT("_id")*100.0 / ({})),2) as "percent" '.format(total_subquery_rows)
         query += ' FROM "{}"'.format(resource_id)   
 
